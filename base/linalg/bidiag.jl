@@ -349,6 +349,15 @@ A_mul_B!(C::AbstractVector, A::BiTri, B::AbstractVector) = A_mul_B_td!(C, A, B)
 A_mul_B!(C::AbstractMatrix, A::BiTri, B::AbstractVecOrMat) = A_mul_B_td!(C, A, B)
 A_mul_B!(C::AbstractVecOrMat, A::BiTri, B::AbstractVecOrMat) = A_mul_B_td!(C, A, B)
 
+@inline \(::Diagonal, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+@inline \(::Bidiagonal, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+@inline \{TA<:Number,TB<:Number}(::Bidiagonal{TA}, ::RowVector{TB}) = error("Cannot left-divide matrix by transposed vector")
+
+@inline At_ldiv_B(::Bidiagonal, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+@inline At_ldiv_B{TA<:Number,TB<:Number}(::Bidiagonal{TA}, ::RowVector{TB}) = error("Cannot left-divide matrix by transposed vector")
+
+@inline Ac_ldiv_B(::Bidiagonal, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+@inline Ac_ldiv_B{TA<:Number,TB<:Number}(::Bidiagonal{TA}, ::RowVector{TB}) = error("Cannot left-divide matrix by transposed vector")
 
 function check_A_mul_B!_sizes(C, A, B)
     nA, mA = size(A)

@@ -872,6 +872,8 @@ function (\)(A::SparseMatrixCSC, B::AbstractVecOrMat)
     end
 end
 
+@inline (\)(::SparseMatrixCSC, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+
 function factorize(A::SparseMatrixCSC)
     m, n = size(A)
     if m == n

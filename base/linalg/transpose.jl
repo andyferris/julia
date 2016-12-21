@@ -125,11 +125,8 @@ function ctranspose(A::AbstractMatrix)
     B = similar(A, (ind2, ind1))
     ctranspose!(B, A)
 end
-ctranspose{T<:Real}(A::AbstractVecOrMat{T}) = transpose(A)
 
-transpose(x::AbstractVector) = [ transpose(v) for i=of_indices(x, OneTo(1)), v in x ]
-ctranspose{T}(x::AbstractVector{T}) = T[ ctranspose(v) for i=of_indices(x, OneTo(1)), v in x ]
-
+@inline ctranspose{T<:Real}(A::AbstractVecOrMat{T}) = transpose(A)
 
 function copy_transpose!{R,S}(B::AbstractVecOrMat{R}, ir_dest::Range{Int}, jr_dest::Range{Int},
                               A::AbstractVecOrMat{S}, ir_src::Range{Int}, jr_src::Range{Int})
@@ -154,7 +151,3 @@ function copy_transpose!{R,S}(B::AbstractVecOrMat{R}, ir_dest::Range{Int}, jr_de
     end
     return B
 end
-
-# TODO remove
-ctranspose(r::Range) = [x for _=1:1, x=r]
-transpose(r::Range) = r'

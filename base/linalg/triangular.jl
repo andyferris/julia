@@ -1634,6 +1634,47 @@ At_mul_Bt(A::AbstractTriangular, B::AbstractTriangular) = At_mul_B(A, B.')
 At_mul_Bt(A::AbstractTriangular, B::AbstractMatrix) = At_mul_B(A, B.')
 At_mul_Bt(A::AbstractMatrix, B::AbstractTriangular) = A_mul_Bt(A.', B)
 
+# Specializations for RowVector
+@inline *(rowvec::RowVector, A::AbstractTriangular) = transpose(A * transpose(rowvec))
+@inline *(::AbstractTriangular, ::RowVector) = error("Cannot right-multiply matrix by transposed vector")
+
+@inline A_mul_Bt(rowvec::RowVector, A::AbstractTriangular) = transpose(A * transpose(rowvec))
+@inline A_mul_Bt(A::AbstractTriangular, rowvec::RowVector) = A * transpose(rowvec)
+
+@inline At_mul_Bt(A::AbstractTriangular, rowvec::RowVector) = A.' * transpose(rowvec)
+@inline At_mul_Bt(::RowVector, ::AbstractTriangular) = error("Cannot left-multiply matrix by vector")
+
+@inline At_mul_B(::AbstractTriangular, ::RowVector) = error("Cannot right-multiply matrix by transposed vector")
+@inline At_mul_B(::RowVector, ::AbstractTriangular) = error("Cannot left-multiply matrix by vector")
+
+@inline A_mul_Bc(rowvec::RowVector, A::AbstractTriangular) = ctranspose(A * ctranspose(rowvec))
+@inline A_mul_Bc(A::AbstractTriangular, rowvec::RowVector) = A * ctranspose(rowvec)
+
+@inline Ac_mul_Bc(A::AbstractTriangular, rowvec::RowVector) = A' * ctranspose(rowvec)
+@inline Ac_mul_Bc(::RowVector, ::AbstractTriangular) = error("Cannot left-multiply matrix by vector")
+
+@inline Ac_mul_B(::AbstractTriangular, ::RowVector) = error("Cannot right-multiply matrix by transposed vector")
+@inline Ac_mul_B(::RowVector, ::AbstractTriangular) = error("Cannot left-multiply matrix by vector")
+
+@inline /(rowvec::RowVector, A::Union{UpperTriangular,LowerTriangular}) = transpose(transpose(A) \ transpose(rowvec))
+@inline /(rowvec::RowVector, A::Union{UnitUpperTriangular,UnitLowerTriangular}) = transpose(transpose(A) \ transpose(rowvec))
+
+@inline A_rdiv_Bt(rowvec::RowVector, A::Union{UpperTriangular,LowerTriangular}) = transpose(A \ transpose(rowvec))
+@inline A_rdiv_Bt(rowvec::RowVector, A::Union{UnitUpperTriangular,UnitLowerTriangular}) = transpose(A \ transpose(rowvec))
+
+@inline A_rdiv_Bc(rowvec::RowVector, A::Union{UpperTriangular,LowerTriangular}) = ctranspose(A \ ctranspose(rowvec))
+@inline A_rdiv_Bc(rowvec::RowVector, A::Union{UnitUpperTriangular,UnitLowerTriangular}) = ctranspose(A \ ctranspose(rowvec))
+
+@inline \(::Union{UpperTriangular,LowerTriangular}, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+@inline \(::Union{UnitUpperTriangular,UnitLowerTriangular}, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+
+@inline At_ldiv_B(::Union{UpperTriangular,LowerTriangular}, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+@inline At_ldiv_B(::Union{UnitUpperTriangular,UnitLowerTriangular}, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+
+@inline Ac_ldiv_B(::Union{UpperTriangular,LowerTriangular}, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+@inline Ac_ldiv_B(::Union{UnitUpperTriangular,UnitLowerTriangular}, ::RowVector) = error("Cannot left-divide matrix by transposed vector")
+
+
 # Complex matrix logarithm for the upper triangular factor, see:
 #   Al-Mohy and Higham, "Improved inverse  scaling and squaring algorithms for
 #     the matrix logarithm", SIAM J. Sci. Comput., 34(4), (2012), pp. C153-C169.
