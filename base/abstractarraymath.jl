@@ -81,7 +81,6 @@ squeeze(A::AbstractArray, dim::Integer) = squeeze(A, (Int(dim),))
 
 ## Unary operators ##
 
-conj{T<:Real}(x::AbstractArray{T}) = x
 conj!{T<:Real}(x::AbstractArray{T}) = x
 
 real{T<:Real}(x::AbstractArray{T}) = x

@@ -21,6 +21,8 @@ export
     BLAS,
 
 # Types
+    ConjArray,
+    TransposedMatrix,
     RowVector,
     SymTridiagonal,
     Tridiagonal,
@@ -237,7 +239,7 @@ end
 copy_oftype{T,N}(A::AbstractArray{T,N}, ::Type{T}) = copy(A)
 copy_oftype{T,N,S}(A::AbstractArray{T,N}, ::Type{S}) = convert(AbstractArray{S,N}, A)
 
-include("transpose.jl")
+include("conjtranspose.jl")
 include("rowvector.jl")
 
 include("exceptions.jl")

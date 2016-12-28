@@ -16,7 +16,7 @@ function conj!{T<:Number}(A::AbstractArray{T})
     return A
 end
 
-for f in (:-, :~, :conj, :sign)
+for f in (:-, :~, :sign)
     @eval begin
         function ($f)(A::AbstractArray)
             F = similar(A)
