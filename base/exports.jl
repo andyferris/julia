@@ -118,6 +118,7 @@ export
     Symmetric,
     SymTridiagonal,
     Timer,
+    TransposedMatrix,
     Tridiagonal,
     UnitRange,
     UpperTriangular,

@@ -11,7 +11,7 @@ import Base: USE_BLAS64, abs, big, broadcast, ceil, conj, convert, copy, copy!,
     ndims, oneunit, parent, power_by_squaring, print_matrix, promote_rule, real, round,
     setindex!, show, similar, size, transpose, trunc, typed_hcat
 using Base: promote_op, _length, iszero, @pure, @propagate_inbounds, LinearFast,
-    reduce, hvcat_fill, typed_vcat, promote_typeof
+    LinearSlow, reduce, hvcat_fill, typed_vcat, promote_typeof
 # We use `_length` because of non-1 indices; releases after julia 0.5
 # can go back to `length`. `_length(A)` is equivalent to `length(linearindices(A))`.
 
@@ -21,10 +21,11 @@ export
     BLAS,
 
 # Types
-    RowVector,
     ConjArray,
     ConjVector,
     ConjMatrix,
+    RowVector,
+    TransposedMatrix,
     SymTridiagonal,
     Tridiagonal,
     Bidiagonal,
@@ -241,15 +242,16 @@ copy_oftype{T}(A::AbstractArray{T}, ::Type{T}) = copy(A)
 copy_oftype{T,N,S}(A::AbstractArray{T,N}, ::Type{S}) = convert(AbstractArray{S,N}, A)
 
 include("conjarray.jl")
-include("transpose.jl")
 include("rowvector.jl")
+include("transposedmatrix.jl")
+include("transpose.jl")
 
 include("exceptions.jl")
 include("generic.jl")
 
+include("matmul.jl")
 include("blas.jl")
 import .BLAS: gemv! # consider renaming gemv! in matmul
-include("matmul.jl")
 include("lapack.jl")
 
 include("dense.jl")

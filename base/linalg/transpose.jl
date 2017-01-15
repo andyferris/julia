@@ -115,12 +115,12 @@ julia> transpose(A)
  3  6  9
 ```
 """
-function transpose(A::AbstractMatrix)
+function copy(m::TransposedMatrix)
     ind1, ind2 = indices(A)
     B = similar(A, (ind2, ind1))
     transpose!(B, A)
 end
-function ctranspose(A::AbstractMatrix)
+function copy(m::ConjTransposedMatrix)
     ind1, ind2 = indices(A)
     B = similar(A, (ind2, ind1))
     ctranspose!(B, A)

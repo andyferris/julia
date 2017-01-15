@@ -4,6 +4,41 @@
 
 # For better performance when input and output are the same array
 # See https://github.com/JuliaLang/julia/issues/8415#issuecomment-56608729
+
+# multiply by diagonal matrix as vector
+function scale!(C::AbstractMatrix, A::AbstractMatrix, b::AbstractVector)
+    m, n = size(A)
+    p, q = size(C)
+    if size(A) != size(C)
+        throw(DimensionMismatch("size of A, $(size(A)), does not match size of C, $(size(C))"))
+    end
+    if n != length(b)
+        throw(DimensionMismatch("second dimension of A, $n, does not match length of b, $(length(b))"))
+    end
+    @inbounds for j = 1:n
+        bj = b[j]
+        for i = 1:m
+            C[i,j] = A[i,j]*bj
+        end
+    end
+    C
+end
+
+function scale!(C::AbstractMatrix, b::AbstractVector, A::AbstractMatrix)
+    m, n = size(A)
+    p, q = size(C)
+    if size(A) != size(C)
+        throw(DimensionMismatch("size of A, $(size(A)), does not match size of C, $(size(C))"))
+    end
+    if m != length(b)
+        throw(DimensionMismatch("first dimension of A, $m, does not match length of b, $(length(b))"))
+    end
+    @inbounds for j = 1:n, i = 1:m
+        C[i,j] = A[i,j]*b[i]
+    end
+    C
+end
+
 function generic_scale!(X::AbstractArray, s::Number)
     @simd for I in eachindex(X)
         @inbounds X[I] *= s

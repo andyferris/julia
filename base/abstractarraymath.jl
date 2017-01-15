@@ -80,8 +80,7 @@ squeeze(A::AbstractArray, dim::Integer) = squeeze(A, (Int(dim),))
 
 ## Unary operators ##
 
-conj(x::AbstractArray{<:Real}) = x
-conj!(x::AbstractArray{<:Real}) = x
+conj!{T<:Real}(x::AbstractArray{T}) = x
 
 real(x::AbstractArray{<:Real}) = x
 imag(x::AbstractArray{<:Real}) = zero(x)

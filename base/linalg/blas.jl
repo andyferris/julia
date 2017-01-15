@@ -2,8 +2,9 @@
 
 module BLAS
 
-import Base: copy!
-import Base.LinAlg: axpy!, dot
+import Base: copy!, *, promote_op
+import Base.LinAlg: axpy!, dot, vecdot, A_mul_B!, ConjArray, RowVector, ConjRowVector,
+    TransposedMatrix, ConjTransposedMatrix, matprod, lapack_size, matmul2x2!, matmul3x3!
 
 export
 # Level 1
@@ -57,7 +58,267 @@ export
 const libblas = Base.libblas_name
 const liblapack = Base.liblapack_name
 
-import ..LinAlg: BlasReal, BlasComplex, BlasFloat, BlasInt, DimensionMismatch, checksquare, axpy!
+import ..LinAlg: BlasReal, BlasComplex, BlasFloat, BlasInt, DimensionMismatch, checksquare, axpy!, matprod
+
+# ------------------------------------------------------------------------------
+# Method specializations of Base and Base.LinAlg
+# ------------------------------------------------------------------------------
+
+# Matrix and vector products. Note that matmul.jl will unwrap RowVector's and takes care of
+# the outer product.
+
+#
+# inner product
+#
+*{T<:BlasComplex}(x::RowVector{SV} where SV <: StridedVector{T}, y::StridedVector{T}) = BLAS.dotu(x, y)
+
+#
+# Matrix-vector multiplication
+#
+A_mul_B!{T<:BlasFloat}(y::StridedVector{T}, A::StridedMatrix{T}, x::StridedVector{T}) = gemv!(y, 'N', A, x)
+# Optimization for using BLAS for complex*real
+for elty in (Float32,Float64)
+    @eval begin
+        function A_mul_B!(y::StridedVector{Complex{$elty}}, A::StridedMatrix{Complex{$elty}}, x::StridedVector{$elty})
+            Afl = reinterpret($elty,A,(2size(A,1),size(A,2)))
+            yfl = reinterpret($elty,y)
+            gemv!(yfl,'N',Afl,x)
+            return y
+        end
+    end
+end
+
+# Optimization to convert vector to matrix's float type to take advantage of BLAS (but only if appropriate)
+function (*){T<:BlasFloat,S}(A::StridedMatrix{T}, x::StridedVector{S})
+    TS = promote_op(matprod, T, S)
+    if TS <: BlasFloat
+        A_mul_B!(similar(x, TS, size(A,1)), A, convert(AbstractVector{TS}, x))
+    else
+        A_mul_B!(similar(x, TS, size(A,1)), A, x)
+    end
+end
+
+
+# Transposed/conjugated specializations of the above
+A_mul_B!{T<:BlasFloat}(y::StridedVector{T}, A::TransposedMatrix{SM} where SM <: StridedMatrix{T}, x::StridedVector{T}) = gemv!(y, 'T', A, x)
+A_mul_B!{T<:BlasComplex}(y::StridedVector{T}, A::ConjTransposedMatrix{SM} where SM <: StridedMatrix{T}, x::StridedVector{T}) = gemv!(y, 'C', A, x)
+
+#
+# Matrix-matrix multiplication
+#
+function A_mul_B!{T<:BlasFloat}(C::StridedMatrix{T}, A::StridedMatrix{T}, B::StridedMatrix{T})
+    gemm_wrapper!(C, 'N', 'N', A, B)
+end
+
+# Standard transposition
+function A_mul_B!{T<:BlasFloat}(C::StridedMatrix{T}, A::TransposedMatrix{SM} where SM <:StridedMatrix{T}, B::StridedMatrix{T})
+    A.'===B ? syrk_wrapper!(C, 'T', A.') : gemm_wrapper!(C, 'T', 'N', A.', B)
+end
+
+function A_mul_B!{T<:BlasFloat}(C::StridedMatrix{T}, A::StridedMatrix{T}, B::TransposedMatrix{SM} where SM <:StridedMatrix{T})
+    A===B.' ? syrk_wrapper!(C, 'T', A) : gemm_wrapper!(C, 'N', 'T', A, B.')
+end
+
+function A_mul_B!{T<:BlasFloat}(C::StridedMatrix{T}, A::TransposedMatrix{SM} where SM <:StridedMatrix{T}, B::TransposedMatrix{SM} where SM <:StridedMatrix{T})
+    gemm_wrapper!(C, 'T', 'T', A.', B.')
+end
+
+# Hermitian conjugation
+function A_mul_B!{T<:BlasComplex}(C::StridedMatrix{T}, A::ConjTransposedMatrix{SM} where SM <:StridedMatrix{T}, B::StridedMatrix{T})
+    A'===B ? herk_wrapper!(C, 'C', A') : gemm_wrapper!(C, 'C', 'N', A', B)
+end
+
+function A_mul_B!{T<:BlasComplex}(C::StridedMatrix{T}, A::StridedMatrix{T}, B::ConjTransposedMatrix{SM} where SM <:StridedMatrix{T})
+    A===B' ? herk_wrapper!(C, 'N', A) : gemm_wrapper!(C, 'N', 'C', A, B')
+end
+
+function A_mul_B!{T<:BlasFloat}(C::StridedMatrix{T}, A::ConjTransposedMatrix{SM} where SM <:StridedMatrix{T}, B::ConjTransposedMatrix{SM} where SM <:StridedMatrix{T})
+    gemm_wrapper!(C, 'C', 'C', A', B')
+end
+
+# Real fallbacks for Hermitian conjugation cases (should occur rarely)
+function A_mul_B!{T<:BlasReal}(C::StridedMatrix{T}, A::ConjTransposedMatrix{SM} where SM <:StridedMatrix{T}, B::StridedMatrix{T})
+    A'===B ? syrk_wrapper!(C, 'T', A') : gemm_wrapper!(C, 'T', 'N', A', B)
+end
+
+function A_mul_B!{T<:BlasReal}(C::StridedMatrix{T}, A::StridedMatrix{T}, B::ConjTransposedMatrix{SM} where SM <:StridedMatrix{T})
+    A'===B ? syrk_wrapper!(C, 'N', A') : gemm_wrapper!(C, 'N', 'T', A, B')
+end
+
+# Mixed cases are not handled here. E.g. `A.' * B'` would in general require a copy be made
+# prior to calling BLAS, and this is a user's responsibility (the same approach applied
+# previously, as we did not define `At_mul_Bc!`)
+
+# Optimization to convert vector to matrix's float type to take advantage of BLAS (but only if appropriate)
+for elty in (Float32,Float64)
+    @eval begin
+        function A_mul_B!(C::StridedMatrix{Complex{$elty}}, A::StridedMatrix{Complex{$elty}}, B::TransposedMatrix{SM} where SM <: StridedMatrix{$elty})
+            Afl = reinterpret($elty, A, (2size(A,1), size(A,2)))
+            Cfl = reinterpret($elty, C, (2size(C,1), size(C,2)))
+            gemm_wrapper!(Cfl, 'N', 'T', Afl, B.')
+            return C
+        end
+    end
+end
+
+
+# High-level wrapper functions
+
+function gemv!{T<:BlasFloat}(y::StridedVector{T}, tA::Char, A::StridedVecOrMat{T}, x::StridedVector{T})
+    mA, nA = lapack_size(tA, A)
+    if nA != length(x)
+        throw(DimensionMismatch("second dimension of A, $nA, does not match length of x, $(length(x))"))
+    end
+    if mA != length(y)
+        throw(DimensionMismatch("first dimension of A, $mA, does not match length of y, $(length(y))"))
+    end
+    if mA == 0
+        return y
+    end
+    if nA == 0
+        return fill!(y,0)
+    end
+    stride(A, 1) == 1 && stride(A, 2) >= size(A, 1) && return BLAS.gemv!(tA, one(T), A, x, zero(T), y)
+    return generic_matvecmul!(y, tA, A, x)
+end
+
+function syrk_wrapper!{T<:BlasFloat}(C::StridedMatrix{T}, tA::Char, A::StridedVecOrMat{T})
+    nC = checksquare(C)
+    if tA == 'T'
+        (nA, mA) = size(A,1), size(A,2)
+        tAt = 'N'
+    else
+        (mA, nA) = size(A,1), size(A,2)
+        tAt = 'T'
+    end
+    if nC != mA
+        throw(DimensionMismatch("output matrix has size: $(nC), but should have size $(mA)"))
+    end
+    if mA == 0 || nA == 0
+        return fill!(C,0)
+    end
+    if mA == 2 && nA == 2
+        return matmul2x2!(C,tA,tAt,A,A)
+    end
+    if mA == 3 && nA == 3
+        return matmul3x3!(C,tA,tAt,A,A)
+    end
+
+    if stride(A, 1) == stride(C, 1) == 1 && stride(A, 2) >= size(A, 1) && stride(C, 2) >= size(C, 1)
+        return copytri!(BLAS.syrk!('U', tA, one(T), A, zero(T), C), 'U')
+    end
+    return generic_matmatmul!(C, tA, tAt, A, A)
+end
+
+function herk_wrapper!{T<:BlasReal}(C::Union{StridedMatrix{T}, StridedMatrix{Complex{T}}}, tA::Char, A::Union{StridedVecOrMat{T}, StridedVecOrMat{Complex{T}}})
+    nC = checksquare(C)
+    if tA == 'C'
+        (nA, mA) = size(A,1), size(A,2)
+        tAt = 'N'
+    else
+        (mA, nA) = size(A,1), size(A,2)
+        tAt = 'C'
+    end
+    if nC != mA
+        throw(DimensionMismatch("output matrix has size: $(nC), but should have size $(mA)"))
+    end
+    if mA == 0 || nA == 0
+        return fill!(C,0)
+    end
+    if mA == 2 && nA == 2
+        return matmul2x2!(C,tA,tAt,A,A)
+    end
+    if mA == 3 && nA == 3
+        return matmul3x3!(C,tA,tAt,A,A)
+    end
+
+    # Result array does not need to be initialized as long as beta==0
+    #    C = Array{T}(mA, mA)
+
+    if stride(A, 1) == stride(C, 1) == 1 && stride(A, 2) >= size(A, 1) && stride(C, 2) >= size(C, 1)
+        return copytri!(BLAS.herk!('U', tA, one(T), A, zero(T), C), 'U', true)
+    end
+    return generic_matmatmul!(C,tA, tAt, A, A)
+end
+
+function gemm_wrapper{T<:BlasFloat}(tA::Char, tB::Char,
+                                    A::StridedVecOrMat{T},
+                                    B::StridedVecOrMat{T})
+    mA, nA = lapack_size(tA, A)
+    mB, nB = lapack_size(tB, B)
+    C = similar(B, T, mA, nB)
+    gemm_wrapper!(C, tA, tB, A, B)
+end
+
+function gemm_wrapper!{T<:BlasFloat}(C::StridedVecOrMat{T}, tA::Char, tB::Char,
+                                     A::StridedVecOrMat{T},
+                                     B::StridedVecOrMat{T})
+    mA, nA = lapack_size(tA, A)
+    mB, nB = lapack_size(tB, B)
+
+    if nA != mB
+        throw(DimensionMismatch("A has dimensions ($mA,$nA) but B has dimensions ($mB,$nB)"))
+    end
+
+    if C === A || B === C
+        throw(ArgumentError("output matrix must not be aliased with input matrix"))
+    end
+
+    if mA == 0 || nA == 0 || nB == 0
+        if size(C) != (mA, nB)
+            throw(DimensionMismatch("C has dimensions $(size(C)), should have ($mA,$nB)"))
+        end
+        return fill!(C,0)
+    end
+
+    if mA == 2 && nA == 2 && nB == 2
+        return matmul2x2!(C,tA,tB,A,B)
+    end
+    if mA == 3 && nA == 3 && nB == 3
+        return matmul3x3!(C,tA,tB,A,B)
+    end
+
+    if stride(A, 1) == stride(B, 1) == stride(C, 1) == 1 && stride(A, 2) >= size(A, 1) && stride(B, 2) >= size(B, 1) && stride(C, 2) >= size(C, 1)
+        return BLAS.gemm!(tA, tB, one(T), A, B, zero(T), C)
+    end
+    generic_matmatmul!(C, tA, tB, A, B)
+end
+
+# Dot products
+
+vecdot{T<:BlasReal}(x::Union{DenseArray{T},StridedVector{T}}, y::Union{DenseArray{T},StridedVector{T}}) = BLAS.dot(x, y)
+vecdot{T<:BlasComplex}(x::Union{DenseArray{T},StridedVector{T}}, y::Union{DenseArray{T},StridedVector{T}}) = BLAS.dotc(x, y)
+
+function dot{T<:BlasReal, TI<:Integer}(x::Vector{T}, rx::Union{UnitRange{TI},Range{TI}}, y::Vector{T}, ry::Union{UnitRange{TI},Range{TI}})
+    if length(rx) != length(ry)
+        throw(DimensionMismatch("length of rx, $(length(rx)), does not equal length of ry, $(length(ry))"))
+    end
+    if minimum(rx) < 1 || maximum(rx) > length(x)
+        throw(BoundsError(x, rx))
+    end
+    if minimum(ry) < 1 || maximum(ry) > length(y)
+        throw(BoundsError(y, ry))
+    end
+    BLAS.dot(length(rx), pointer(x)+(first(rx)-1)*sizeof(T), step(rx), pointer(y)+(first(ry)-1)*sizeof(T), step(ry))
+end
+
+function dot{T<:BlasComplex, TI<:Integer}(x::Vector{T}, rx::Union{UnitRange{TI},Range{TI}}, y::Vector{T}, ry::Union{UnitRange{TI},Range{TI}})
+    if length(rx) != length(ry)
+        throw(DimensionMismatch("length of rx, $(length(rx)), does not equal length of ry, $(length(ry))"))
+    end
+    if minimum(rx) < 1 || maximum(rx) > length(x)
+        throw(BoundsError(x, rx))
+    end
+    if minimum(ry) < 1 || maximum(ry) > length(y)
+        throw(BoundsError(y, ry))
+    end
+    BLAS.dotc(length(rx), pointer(x)+(first(rx)-1)*sizeof(T), step(rx), pointer(y)+(first(ry)-1)*sizeof(T), step(ry))
+end
+
+
+# ------------------------------------------------------------------------------
+# BLAS wrapper implementation
+# ------------------------------------------------------------------------------
 
 # utility routines
 function vendor()

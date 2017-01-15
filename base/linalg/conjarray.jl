@@ -52,11 +52,13 @@ linearindexing{CA <: ConjArray}(::Type{CA}) = linearindexing(parent_type(CA))
 
 @inline similar{T,N}(a::ConjArray, ::Type{T}, dims::Dims{N}) = similar(parent(a), T, dims)
 
-# Currently, this is default behavior for RowVector only
+"""
+    conj(array)
+
+Returns a `ConjArray` lazy view of the input, where each element is conjugated.
+"""
+@inline conj(a::AbstractArray) = ConjArray(a)
 @inline conj(a::ConjArray) = parent(a)
 
-# Helper functions, currently used by RowVector
-@inline _conj(a::AbstractArray) = ConjArray(a)
-@inline _conj{T<:Real}(a::AbstractArray{T}) = a
-@inline _conj(a::ConjArray) = parent(a)
-@inline _conj{T<:Real}(a::ConjArray{T}) = parent(a)
+@inline conj(a::AbstractArray{T} where T <: Real) = a
+@inline conj(a::ConjArray{T} where T <: Real) = a      # disambiguation

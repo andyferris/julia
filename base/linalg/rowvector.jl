@@ -163,7 +163,7 @@ end
     transpose(typed_vcat(T, map(transpose, X)...))
 
 # Multiplication #
-
+#=
 # inner product -> dot product specializations
 @inline *{T<:Real}(rowvec::RowVector{T}, vec::AbstractVector{T}) = dot(parent(rowvec), vec)
 @inline *(rowvec::ConjRowVector, vec::AbstractVector) = dot(rowvec', vec)
@@ -225,7 +225,7 @@ Ac_mul_B(::RowVector, ::AbstractVector) = throw(DimensionMismatch("Cannot multip
 @inline Ac_mul_B(rowvec1::RowVector, rowvec2::RowVector) = ctranspose(rowvec1) * rowvec2
 Ac_mul_B(vec::AbstractVector, rowvec::RowVector) = throw(DimensionMismatch("Cannot multiply two transposed vectors"))
 @inline Ac_mul_B(vec1::AbstractVector, vec2::AbstractVector) = ctranspose(vec1)*vec2
-
+=#
 # Left Division #
 
 \(mat::AbstractMatrix, rowvec::RowVector) = throw(DimensionMismatch("Cannot left-divide transposed vector by matrix"))
