@@ -129,12 +129,12 @@ end
         @test length(reshape(s, length(s))) == 0
     end
 end
-@testset "reshape(a, Val{N})" begin
+@testset "reshape(a, Val(N))" begin
     a = ones(Int,3,3)
     s = view(a, 1:2, 1:2)
     for N in (1,3)
-        @test isa(reshape(a, Val{N}), Array{Int,N})
-        @test isa(reshape(s, Val{N}), Base.ReshapedArray{Int,N})
+        @test isa(reshape(a, Val(N)), Array{Int,N})
+        @test isa(reshape(s, Val(N)), Base.ReshapedArray{Int,N})
     end
 end
 @testset "reshape with colon" begin

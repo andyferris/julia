@@ -1491,6 +1491,23 @@ export conv, conv2, deconv, filt, filt!, xcorr
 @deprecate cov(X::AbstractVector, Y::AbstractVector, corrected::Bool) cov(X, Y, corrected=corrected)
 @deprecate cov(X::AbstractVecOrMat, Y::AbstractVecOrMat, vardim::Int, corrected::Bool) cov(X, Y, vardim, corrected=corrected)
 
+# PR #22475
+@deprecate ntuple{N}(f, ::Type{Val{N}}) ntuple(f, Val(N))
+@deprecate fill_to_length{N}(t, val, ::Type{Val{N}}) fill_to_length(t, val, Val(N)) false
+@deprecate literal_pow{N}(a,b , ::Type{Val{N}}) literal_pow(f, Val(N)) false
+@eval IteratorsMD @deprecate split(t, V::Type{Val{n}}) split(t, Val(n)) false
+@deprecate sqrtm{T,realmatrix}(A::UpperTriangular{T},::Type{Val{realmatrix}}) sqrtm(A, Val(realmatrix))
+@deprecate lufact(::AbstractMatrixA, ::Type{Val{false}}) lufact(A, Val(false))
+@deprecate lufact(A::AbstractMatrix, ::Type{Val{true}}) lufact(A, Val(true))
+@deprecate lufact!(A::AbstractMatrix, ::Type{Val{false}}) lufact!(A, Val(false))
+@deprecate lufact!(A::AbstractMatrix, ::Type{Val{true}}) lufact!(A, Val(true))
+@deprecate qrfact(A::AbstractMatrix, ::Type{Val{false}}) qrfact(A, Val(false))
+@deprecate qrfact(A::AbstractMatrix, ::Type{Val{true}}) qrfact(A, Val(true))
+@deprecate qrfact!(A::AbstractMatrix, ::Type{Val{false}}) qrfact!(A, Val(false))
+@deprecate qrfact!(A::AbstractMatrix, ::Type{Val{true}}) qrfact!(A, Val(true))
+@deprecate cat{N}(::Type{Val{N}}, A, B) cat(Val(N), A, B)
+@deprecate cat_t{N,T}(::Type{Val{N}}, ::Type{T}, A, B) cat(Val(N), T, A, B) false
+
 # END 0.7 deprecations
 
 # BEGIN 1.0 deprecations

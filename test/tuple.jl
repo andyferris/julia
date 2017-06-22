@@ -42,8 +42,8 @@ end
 @test getindex((5,6,7,8), []) === ()
 
 ## filling to specified length
-@test @inferred(Base.fill_to_length((1,2,3), -1, Val{5})) == (1,2,3,-1,-1)
-@test_throws ArgumentError Base.fill_to_length((1,2,3), -1, Val{2})
+@test @inferred(Base.fill_to_length((1,2,3), -1, Val(5))) == (1,2,3,-1,-1)
+@test_throws ArgumentError Base.fill_to_length((1,2,3), -1, Val(2))
 
 ## iterating ##
 @test start((1,2,3)) === 1
@@ -162,17 +162,17 @@ end
 @test any((true,true,false)) === true
 @test any((true,true,true)) === true
 
-@test @inferred(ntuple(abs2, Val{0})) == ()
-@test @inferred(ntuple(abs2, Val{2})) == (1, 4)
-@test @inferred(ntuple(abs2, Val{3})) == (1, 4, 9)
-@test @inferred(ntuple(abs2, Val{4})) == (1, 4, 9, 16)
-@test @inferred(ntuple(abs2, Val{5})) == (1, 4, 9, 16, 25)
-@test @inferred(ntuple(abs2, Val{6})) == (1, 4, 9, 16, 25, 36)
+@test @inferred(ntuple(abs2, Val(0))) == ()
+@test @inferred(ntuple(abs2, Val(2))) == (1, 4)
+@test @inferred(ntuple(abs2, Val(3))) == (1, 4, 9)
+@test @inferred(ntuple(abs2, Val(4))) == (1, 4, 9, 16)
+@test @inferred(ntuple(abs2, Val(5))) == (1, 4, 9, 16, 25)
+@test @inferred(ntuple(abs2, Val(6))) == (1, 4, 9, 16, 25, 36)
 # issue #21697
-@test_throws ArgumentError ntuple(abs2, Val{-1})
+@test_throws ArgumentError ntuple(abs2, Val(-1))
 
 # issue #12854
-@test_throws TypeError ntuple(identity, Val{1:2})
+@test_throws TypeError ntuple(identity, Val(1:2))
 
 for n = 0:20
     t = ntuple(identity, n)
@@ -258,7 +258,7 @@ end
 
 # PR #21446
 for n = 0:15
-    @test ntuple(identity, Val{n}) == ntuple(identity, n)
+    @test ntuple(identity, Val(n)) == ntuple(identity, n)
 end
 
 # Tuple type ninitialized

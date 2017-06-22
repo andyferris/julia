@@ -313,9 +313,33 @@ struct Colon
 end
 const (:) = Colon()
 
-# For passing constants through type inference
-struct Val{T}
+"""
+    Val(c)
+
+Return `Val{c}()`, which contains no run-time data. Types like this can be used to
+pass the information between functions through the value `c`, which must be an `isbits`
+value. The intent of this construct is to be able to dispatch on constants directly (at
+compile time) without having test the value of the constant at run time.
+
+### Example
+
+```jldoctest
+julia> f(::Val{true}) = "Good"
+f (generic function with 1 method)
+
+julia> f(::Val{false}) = "Bad"
+f (generic function with 2 methods)
+
+julia> f(Val(true))
+"Good"
+```
+"""
+struct Val{x}
 end
+
+Val(x) = (@_pure_meta; Val{x}())
+
+show(io::IO, ::Val{x}) where {x} = print(io, "Val($x)")
 
 # used by interpolating quote and some other things in the front end
 function vector_any(xs::ANY...)
