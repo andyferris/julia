@@ -13,7 +13,7 @@ Code Coverage: [![Coverage Status](https://coveralls.io/repos/JuliaLang/julia/ba
 
 ## The Julia Language
 
-Julia is a high-level, high-performance dynamic language for technical computing.
+Julia is a really awesome but sometimes annoying high-level, high-performance dynamic language for technical computing.
 The main homepage for Julia can be found at [julialang.org](https://julialang.org/).
 This is the GitHub repository of Julia source code, including instructions for compiling and installing Julia, below.
 
