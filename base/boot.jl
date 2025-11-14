@@ -211,7 +211,7 @@ export
     AbstractArray, DenseArray, NamedTuple, Pair,
     # special objects
     Function, Method, Module, Symbol, Task, UndefInitializer, undef, WeakRef, VecElement,
-    Array, Memory, MemoryRef, AtomicMemory, AtomicMemoryRef, GenericMemory, GenericMemoryRef,
+    Array, Memory, MemoryRef, AtomicMemory, AtomicMemoryRef, GenericMemory, GenericMemoryRef, SizedMemory,
     # numeric types
     Number, Real, Integer, Bool, Ref, Ptr,
     AbstractFloat, Float16, Float32, Float64,
@@ -600,6 +600,43 @@ GenericMemoryRef(mem::GenericMemoryRef, i::Integer) = memoryref(mem, i)
 
 const AtomicMemory{T} = GenericMemory{:atomic, T, CPU}
 const AtomicMemoryRef{T} = GenericMemoryRef{:atomic, T, CPU}
+
+# SizedMemory{T, N} - statically-sized mutable array
+# Minimal boot-time interface, full interface comes later in Base
+
+# Constructor
+(self::Type{SizedMemory{T, N}})() where {T, N} =
+    ccall(:jl_alloc_sizedmemory, Ref{SizedMemory{T, N}}, (Any,), SizedMemory{T, N})
+
+# Basic accessors
+length(sm::SizedMemory{T, N}) where {T, N} = N::Int
+size(sm::SizedMemory{T, N}) where {T, N} = (N,)
+
+# getindex - 1-based indexing (minimal boot-time version without @inline/@boundscheck)
+function getindex(sm::SizedMemory{T, N}, i::Int) where {T, N}
+    # Bounds check: 1 <= i <= N, equivalent to (i - 1) < N for unsigned
+    Intrinsics.ult_int(Intrinsics.bitcast(UInt, Intrinsics.sub_int(i, 1)), Intrinsics.bitcast(UInt, N)) || throw(BoundsError(sm, i))
+    # Convert to 0-based for C call (use Intrinsics.sub_int since - not defined yet)
+    return ccall(:jl_sizedmemory_ref, Any, (Any, Int), sm, Intrinsics.sub_int(i, 1))::T
+end
+
+# setindex! - 1-based indexing (minimal boot-time version)
+function setindex!(sm::SizedMemory{T, N}, val, i::Int) where {T, N}
+    # Bounds check: 1 <= i <= N, equivalent to (i - 1) < N for unsigned
+    Intrinsics.ult_int(Intrinsics.bitcast(UInt, Intrinsics.sub_int(i, 1)), Intrinsics.bitcast(UInt, N)) || throw(BoundsError(sm, i))
+    # Type assertion for better inference
+    val_T = convert(T, val)
+    # Convert to 0-based for C call (use Intrinsics.sub_int since - not defined yet)
+    ccall(:jl_sizedmemory_set, Cvoid, (Any, Int, Any), sm, Intrinsics.sub_int(i, 1), val_T)
+    return val
+end
+
+# Iteration support (use Intrinsics since >, + not defined yet)
+function iterate(sm::SizedMemory{T, N}, state::Int=1) where {T, N}
+    # Check if state > N (use slt_int: state <= N is equivalent to !(N < state))
+    Intrinsics.slt_int(N, state) && return nothing
+    return (getindex(sm, state), Intrinsics.add_int(state, 1))
+end
 
 # construction helpers for Array
 new_as_memoryref(self::Type{GenericMemoryRef{kind,T,addrspace}}, m::Int) where {T,kind,addrspace} = memoryref(fieldtype(self, :mem)(undef, m))

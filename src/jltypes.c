@@ -3381,6 +3381,17 @@ void jl_init_types(void) JL_GC_DISABLED
     jl_memoryref_any_type = jl_apply_type3((jl_value_t*)jl_genericmemoryref_type, (jl_value_t*)jl_not_atomic_sym, (jl_value_t*)jl_any_type, cpumem);
     jl_memoryref_uint8_type = jl_apply_type3((jl_value_t*)jl_genericmemoryref_type, (jl_value_t*)jl_not_atomic_sym, (jl_value_t*)jl_uint8_type, cpumem);
 
+    // SizedMemory{T, N} - statically sized memory with N elements of type T
+    tv = jl_svec2(tvar("T"), tvar("N"));
+    jl_datatype_t *sizedmemory_datatype =
+        jl_new_datatype(jl_symbol("SizedMemory"), core, jl_any_type, tv,
+                        jl_emptysvec,  // No named fields (opaque inline storage)
+                        jl_emptysvec,  // No field types
+                        jl_emptysvec, 0, 1, 0);  // abstract=0, mutabl=1, ninitialized=0
+    jl_sizedmemory_typename = sizedmemory_datatype->name;
+    jl_sizedmemory_type = (jl_unionall_t*)jl_sizedmemory_typename->wrapper;
+    sizedmemory_datatype->ismutationfree = 0;
+
     tv = jl_svec2(tvar("T"), tvar("N"));
     jl_array_typename = jl_new_datatype(jl_symbol("Array"), core,
                         (jl_datatype_t*)jl_apply_type((jl_value_t*)jl_densearray_type, jl_svec_data(tv), 2),

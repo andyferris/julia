@@ -2450,6 +2450,64 @@ FORCE_INLINE void gc_mark_outrefs(jl_ptls_t ptls, jl_gc_markqueue_t *mq, void *_
             }
             return;
         }
+        // SizedMemory{T, N} - fixed-size inline storage
+        else if (vt->name == jl_sizedmemory_typename) {
+            // SizedMemory always uses pooled (inline) storage
+            if (update_meta)
+                gc_setmark_pool(ptls, o, bits);
+
+            const jl_datatype_layout_t *layout = vt->layout;
+            uint32_t npointers = layout->npointers;
+
+            // If no pointers, nothing to mark
+            if (npointers == 0)
+                return;
+
+            // Mark interior pointers using the pre-computed pointer map
+            uintptr_t nptr = (npointers << 2 | (bits & GC_OLD));
+            char *obj_parent = (char *)new_obj;
+
+            if (layout->flags.fielddesc_type == 0) {
+                uint8_t *obj8_begin = (uint8_t *)jl_dt_layout_ptrs(layout);
+                uint8_t *obj8_end = obj8_begin + npointers;
+                assert(obj8_begin < obj8_end);
+                new_obj = gc_mark_obj8(ptls, obj_parent, obj8_begin, obj8_end, nptr);
+                if (new_obj != NULL) {
+                    if (!meta_updated)
+                        goto mark_obj;
+                    else
+                        gc_ptr_queue_push(mq, new_obj);
+                }
+            }
+            else if (layout->flags.fielddesc_type == 1) {
+                uint16_t *obj16_begin = (uint16_t *)jl_dt_layout_ptrs(layout);
+                uint16_t *obj16_end = obj16_begin + npointers;
+                assert(obj16_begin < obj16_end);
+                new_obj = gc_mark_obj16(ptls, obj_parent, obj16_begin, obj16_end, nptr);
+                if (new_obj != NULL) {
+                    if (!meta_updated)
+                        goto mark_obj;
+                    else
+                        gc_ptr_queue_push(mq, new_obj);
+                }
+            }
+            else if (layout->flags.fielddesc_type == 2) {
+                uint32_t *obj32_begin = (uint32_t *)jl_dt_layout_ptrs(layout);
+                uint32_t *obj32_end = obj32_begin + npointers;
+                assert(obj32_begin < obj32_end);
+                new_obj = gc_mark_obj32(ptls, obj_parent, obj32_begin, obj32_end, nptr);
+                if (new_obj != NULL) {
+                    if (!meta_updated)
+                        goto mark_obj;
+                    else
+                        gc_ptr_queue_push(mq, new_obj);
+                }
+            }
+            else {
+                assert(0 && "SizedMemory should not have fielddesc_type 3");
+            }
+            return;
+        }
         size_t dtsz = jl_datatype_size(vt);
         if (update_meta)
             gc_setmark(ptls, o, bits, dtsz);

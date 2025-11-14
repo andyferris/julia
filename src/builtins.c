@@ -2632,6 +2632,7 @@ void jl_init_primitives(void) JL_GC_DISABLED
     add_builtin("Array", (jl_value_t*)jl_array_type);
     add_builtin("GenericMemory", (jl_value_t*)jl_genericmemory_type);
     add_builtin("GenericMemoryRef", (jl_value_t*)jl_genericmemoryref_type);
+    add_builtin("SizedMemory", (jl_value_t*)jl_sizedmemory_type);
 
     add_builtin("Expr", (jl_value_t*)jl_expr_type);
     add_builtin("LineNumberNode", (jl_value_t*)jl_linenumbernode_type);

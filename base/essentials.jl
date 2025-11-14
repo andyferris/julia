@@ -398,6 +398,26 @@ end
 
 getindex(A::GenericMemoryRef) = memoryrefget(A, default_access_order(A), @_boundscheck)
 
+# SizedMemory basic interface
+length(sm::SizedMemory{T, N}) where {T, N} = N
+size(sm::SizedMemory{T, N}) where {T, N} = (N,)
+axes(sm::SizedMemory{T, N}) where {T, N} = (OneTo(N),)
+
+# SizedMemory getindex/setindex!
+function getindex(sm::SizedMemory{T, N}, i::Int) where {T, N}
+    @_noub_if_noinbounds_meta
+    (@_boundscheck) && checkbounds(sm, i)
+    ccall(:jl_sizedmemory_ref, Any, (Any, Int), sm, i - 1)::T
+end
+
+function setindex!(sm::SizedMemory{T, N}, val, i::Int) where {T, N}
+    @_noub_if_noinbounds_meta
+    (@_boundscheck) && checkbounds(sm, i)
+    val_T = val isa T ? val : convert(T, val)
+    ccall(:jl_sizedmemory_set, Cvoid, (Any, Int, Any), sm, i - 1, val_T)
+    return val
+end
+
 """
     nameof(m::Module)::Symbol
 

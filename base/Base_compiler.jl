@@ -325,6 +325,7 @@ include("indices.jl")
 include("genericmemory.jl")
 include("array.jl")
 include("abstractarray.jl")
+include("sizedmemory.jl")
 include("baseext.jl")
 
 include("c.jl")

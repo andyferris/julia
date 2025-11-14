@@ -628,6 +628,9 @@ void jl_get_genericmemory_layout(jl_datatype_t *st)
     }
 }
 
+// Include SizedMemory layout computation
+#include "datatype_sizedmemory.c"
+
 void jl_compute_field_offsets(jl_datatype_t *st)
 {
     const uint64_t max_offset = (((uint64_t)1) << 32) - 1;
@@ -644,6 +647,10 @@ void jl_compute_field_offsets(jl_datatype_t *st)
     }
     if (st->name == jl_genericmemory_typename) {
         jl_get_genericmemory_layout(st);
+        return;
+    }
+    if (st->name == jl_sizedmemory_typename) {
+        jl_get_sizedmemory_layout(st);
         return;
     }
     int isbitstype = st->isconcretetype && st->name->mayinlinealloc;

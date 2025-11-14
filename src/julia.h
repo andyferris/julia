@@ -194,6 +194,15 @@ JL_EXTENSION typedef struct {
     size_t dimsize[]; // length for 1-D, otherwise length is mem->length
 } jl_array_t;
 
+// SizedMemory{T, N}: fixed-size, statically-known memory block
+// Data is stored inline immediately after this header
+// Size and layout determined by type parameters at instantiation
+typedef struct _jl_sizedmemory_t {
+    JL_DATA_TYPE
+    // No fields - data stored inline after this struct
+    // Length is encoded in the type, not stored at runtime
+} jl_sizedmemory_t;
+
 
 typedef struct _jl_datatype_t jl_tupletype_t;
 struct _jl_code_instance_t;
@@ -1436,6 +1445,14 @@ STATIC_INLINE const jl_datatype_layout_t *jl_datatype_layout(jl_datatype_t *t) J
 #define jl_datatype_align(t)   (jl_datatype_layout((jl_datatype_t*)(t))->alignment)
 #define jl_datatype_nbits(t)   ((jl_datatype_layout((jl_datatype_t*)(t))->size)*8)
 #define jl_datatype_nfields(t) (jl_datatype_layout((jl_datatype_t*)(t))->nfields)
+
+// SizedMemory accessor macros
+// Get length from SizedMemory type parameter N
+#define jl_sizedmemory_length(smtype) (jl_unbox_long(jl_tparam1(smtype)))
+// Get element type from SizedMemory type parameter T
+#define jl_sizedmemory_eltype(smtype) (jl_tparam0(smtype))
+// Get pointer to inline data (no header fields, data starts at object base)
+#define jl_sizedmemory_data(sm) ((void*)(sm))
 
 JL_DLLEXPORT void *jl_symbol_name(jl_sym_t *s);
 // inline version with strong type check to detect typos in a `->name` chain

@@ -651,6 +651,11 @@ JL_DLLEXPORT void jl_gc_update_inlined_array(void* from, void* to) {
             }
         }
     }
+    else if(vt->name == jl_sizedmemory_typename) {
+        // SizedMemory data is always inline at a fixed offset after the header.
+        // When MMTk copies the object, the data is copied with it automatically.
+        // No pointer updates needed.
+    }
 }
 
 // modified sweep_stack_pools from gc-stacks.c
