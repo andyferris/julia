@@ -61,20 +61,32 @@ JL_DLLEXPORT jl_value_t *jl_sizedmemory_ref(jl_sizedmemory_t *sm, size_t i)
     if (i >= n)
         jl_bounds_error_int((jl_value_t*)sm, i + 1);  // Julia uses 1-based indexing
 
-    // Get element size from element type
-    if (!jl_is_datatype(eltype))
-        jl_error("jl_sizedmemory_ref: element type must be a concrete datatype");
+    // Check if element type is boxed
+    size_t elsz_check = 0, al_check = 1;
+    int isunboxed = jl_islayout_inline(eltype, &elsz_check, &al_check);
 
-    jl_datatype_t *eldt = (jl_datatype_t*)eltype;
-    const jl_datatype_layout_t *el_layout = eldt->layout;
-    size_t elsz = el_layout->size;
-
-    // Align element size (layout size is already aligned)
     char *data = (char*)jl_sizedmemory_data(sm);
-    char *elem_ptr = data + i * elsz;
 
-    // Return a copy of the element value
-    return jl_new_bits(eltype, elem_ptr);
+    if (!isunboxed) {
+        // Boxed elements: dereference pointer
+        jl_value_t **elem_ptr = (jl_value_t**)(data + i * sizeof(void*));
+        jl_value_t *elt = jl_atomic_load_relaxed((_Atomic(jl_value_t*)*)elem_ptr);
+        if (elt == NULL)
+            jl_throw(jl_undefref_exception);  // Uninitialized
+        return elt;
+    }
+    else {
+        // Inline elements: copy bits to new object
+        if (!jl_is_datatype(eltype))
+            jl_error("jl_sizedmemory_ref: element type must be a concrete datatype");
+
+        jl_datatype_t *eldt = (jl_datatype_t*)eltype;
+        const jl_datatype_layout_t *el_layout = eldt->layout;
+        size_t elsz = el_layout->size;
+
+        char *elem_ptr = data + i * elsz;
+        return jl_new_bits(eltype, elem_ptr);
+    }
 }
 
 // Set element at index i (0-based)
@@ -93,27 +105,40 @@ JL_DLLEXPORT void jl_sizedmemory_set(jl_sizedmemory_t *sm, size_t i, jl_value_t 
             jl_type_error("jl_sizedmemory_set", eltype, val);
     }
 
-    // Get element size from element type
-    if (!jl_is_datatype(eltype))
-        jl_error("jl_sizedmemory_set: element type must be a concrete datatype");
-
-    jl_datatype_t *eldt = (jl_datatype_t*)eltype;
-    const jl_datatype_layout_t *el_layout = eldt->layout;
-    size_t elsz = el_layout->size;
+    // Check if element type is boxed
+    size_t elsz_check = 0, al_check = 1;
+    int isunboxed = jl_islayout_inline(eltype, &elsz_check, &al_check);
 
     char *data = (char*)jl_sizedmemory_data(sm);
-    char *elem_ptr = data + i * elsz;
 
-    // Check if element type has pointers
-    int hasptr = el_layout->first_ptr >= 0;
+    if (!isunboxed) {
+        // Boxed elements: store pointer with write barrier
+        jl_value_t **elem_ptr = (jl_value_t**)(data + i * sizeof(void*));
+        jl_atomic_store_release((_Atomic(jl_value_t*)*)elem_ptr, val);
+        jl_gc_wb(sm, val);  // Write barrier for GC
+    }
+    else {
+        // Inline elements: copy bits
+        if (!jl_is_datatype(eltype))
+            jl_error("jl_sizedmemory_set: element type must be a concrete datatype");
 
-    // Copy data - memassign_safe handles unboxing and pointer tracking
-    size_t fsz = jl_datatype_size((jl_datatype_t*)jl_typeof(val));
-    memassign_safe(hasptr, elem_ptr, val, fsz);
+        jl_datatype_t *eldt = (jl_datatype_t*)eltype;
+        const jl_datatype_layout_t *el_layout = eldt->layout;
+        size_t elsz = el_layout->size;
 
-    // Write barrier if needed
-    if (hasptr)
-        jl_gc_wb(sm, val);
+        char *elem_ptr = data + i * elsz;
+
+        // Check if element type has pointers
+        int hasptr = el_layout->first_ptr >= 0;
+
+        // Copy data safely
+        size_t fsz = jl_datatype_size((jl_datatype_t*)jl_typeof(val));
+        memassign_safe(hasptr, elem_ptr, val, fsz);
+
+        // Write barrier if needed
+        if (hasptr)
+            jl_gc_wb(sm, val);
+    }
 }
 
 // Get length from SizedMemory type

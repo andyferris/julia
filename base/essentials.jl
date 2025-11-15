@@ -399,9 +399,19 @@ end
 getindex(A::GenericMemoryRef) = memoryrefget(A, default_access_order(A), @_boundscheck)
 
 # SizedMemory basic interface
-length(sm::SizedMemory{T, N}) where {T, N} = N
-size(sm::SizedMemory{T, N}) where {T, N} = (N,)
-axes(sm::SizedMemory{T, N}) where {T, N} = (OneTo(N),)
+length(sm::SizedMemory{T, S}) where {T, S} = S
+size(sm::SizedMemory{T, S}) where {T, S} = (S,)
+axes(sm::SizedMemory{T, S}) where {T, S} = (OneTo(S),)
+
+# SizedMemory bounds checking
+function checkbounds(::Type{Bool}, sm::SizedMemory{T, S}, i::Int) where {T, S}
+    @inline
+    ult_int(bitcast(UInt, sub_int(i, 1)), bitcast(UInt, S))
+end
+function checkbounds(sm::SizedMemory, i::Int)
+    @inline
+    checkbounds(Bool, sm, i) || throw_boundserror(sm, (i,))
+end
 
 # SizedMemory getindex/setindex!
 function getindex(sm::SizedMemory{T, N}, i::Int) where {T, N}

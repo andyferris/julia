@@ -3381,10 +3381,15 @@ void jl_init_types(void) JL_GC_DISABLED
     jl_memoryref_any_type = jl_apply_type3((jl_value_t*)jl_genericmemoryref_type, (jl_value_t*)jl_not_atomic_sym, (jl_value_t*)jl_any_type, cpumem);
     jl_memoryref_uint8_type = jl_apply_type3((jl_value_t*)jl_genericmemoryref_type, (jl_value_t*)jl_not_atomic_sym, (jl_value_t*)jl_uint8_type, cpumem);
 
-    // SizedMemory{T, N} - statically sized memory with N elements of type T
-    tv = jl_svec2(tvar("T"), tvar("N"));
+    // SizedMemory{T, S} - statically sized memory with S elements of type T
+    // Use S instead of N to avoid confusion with DenseArray's N (dimensions)
+    tv = jl_svec2(tvar("T"), tvar("S"));
+    // Create DenseArray{T, 1} supertype - 1 is the number of dimensions, not size
+    jl_datatype_t *jl_sizedmemory_supertype = (jl_datatype_t*)jl_apply_type2((jl_value_t*)jl_densearray_type,
+                                                                               jl_svecref(tv, 0),  // T parameter
+                                                                               jl_box_long(1));    // 1 dimension
     jl_datatype_t *sizedmemory_datatype =
-        jl_new_datatype(jl_symbol("SizedMemory"), core, jl_any_type, tv,
+        jl_new_datatype(jl_symbol("SizedMemory"), core, jl_sizedmemory_supertype, tv,
                         jl_emptysvec,  // No named fields (opaque inline storage)
                         jl_emptysvec,  // No field types
                         jl_emptysvec, 0, 1, 0);  // abstract=0, mutabl=1, ninitialized=0

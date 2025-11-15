@@ -814,3 +814,315 @@ end
 - Testing: 2-4 hours (comprehensive tests)
 
 **Total**: ~10-15 hours for complete MVP implementation
+
+---
+
+## Priority 2: Non-isbitstype T Support
+
+### Current Blocker
+
+**File**: `src/datatype_sizedmemory.c:43-51`
+
+```c
+size_t elsz = 0, al = 1;
+int isunboxed = jl_islayout_inline(eltype, &elsz, &al);
+
+if (!isunboxed)
+    jl_error("SizedMemory element type must be inlineable (for now)");
+```
+
+This check prevents using types like `Any`, `String`, `Vector{Int}`, or any non-isbitstype as elements.
+
+### How GenericMemory Handles Boxed Elements
+
+**Key Insight**: For non-isbitstype T (boxed elements):
+- Elements are stored as **pointers** (type `jl_value_t*`)
+- Element size is **always** `sizeof(void*)` (8 bytes on 64-bit)
+- Storage contains pointers to heap-allocated objects
+- All N positions are pointers (simple pointer map: [0, 1, 2, ..., N-1])
+- Uses `arrayelem_isboxed` flag to distinguish boxed vs inline
+
+**GenericMemory Layout** (from `src/datatype.c:590-611`):
+```c
+else {
+    elsz = sizeof(void*);  // Boxed: store pointers, not actual data
+    al = elsz;
+    zi = 1;  // Zero-init (NULL pointers)
+}
+
+int arrayelem = 0;
+if (!isunboxed)
+    arrayelem |= 1;  // Set arrayelem_isboxed flag
+
+st->layout = jl_get_layout(elsz, nfields, npointers, al, haspadding,
+                           isbitsegal, arrayelem, NULL, pointers);
+```
+
+**GenericMemory Accessors** (from `src/genericmemory.c`):
+
+**Get** (lines 332-348):
+```c
+static jl_value_t *jl_ptrmemrefget(jl_genericmemoryref_t m, int isatomic) {
+    assert(layout->flags.arrayelem_isboxed);
+    _Atomic(jl_value_t*) *ptr = (_Atomic(jl_value_t*)*)m.ptr_or_offset;
+    jl_value_t *elt = isatomic ? jl_atomic_load(ptr) : jl_atomic_load_relaxed(ptr);
+    if (elt == NULL)
+        jl_throw(jl_undefref_exception);  // Uninitialized
+    return elt;  // Return the heap object, not the pointer
+}
+
+JL_DLLEXPORT jl_value_t *jl_memoryrefget(jl_genericmemoryref_t m, int isatomic) {
+    const jl_datatype_layout_t *layout = ((jl_datatype_t*)jl_typetagof(m.mem))->layout;
+    if (layout->flags.arrayelem_isboxed)
+        return jl_ptrmemrefget(m, isatomic);  // Dereference pointer
+    // ... inline case ...
+}
+```
+
+**Set** (lines 420-428):
+```c
+if (layout->flags.arrayelem_isboxed) {
+    assert((char*)m.ptr_or_offset - (char*)m.mem->ptr < sizeof(jl_value_t*) * m.mem->length);
+    if (isatomic)
+        jl_atomic_store((_Atomic(jl_value_t*)*)m.ptr_or_offset, rhs);
+    else
+        jl_atomic_store_release((_Atomic(jl_value_t*)*)m.ptr_or_offset, rhs);
+    jl_gc_wb(jl_genericmemory_owner(m.mem), rhs);  // Write barrier for GC
+    return;
+}
+```
+
+### Required Changes for SizedMemory
+
+#### 1. Layout Computation (`src/datatype_sizedmemory.c`)
+
+**Change lines 43-68** from:
+```c
+size_t elsz = 0, al = 1;
+int isunboxed = jl_islayout_inline(eltype, &elsz, &al);
+
+if (!isunboxed)
+    jl_error("SizedMemory element type must be inlineable (for now)");
+
+// Align element size
+elsz = LLT_ALIGN(elsz, al);
+
+// Compute total data size
+size_t total_data_size = 0;
+int overflow = __builtin_mul_overflow(n, elsz, &total_data_size);
+```
+
+**To**:
+```c
+size_t elsz = 0, al = 1;
+int isunboxed = jl_islayout_inline(eltype, &elsz, &al);
+
+// Handle boxed (non-inlineable) element types
+if (!isunboxed) {
+    elsz = sizeof(void*);  // Store pointers, not data
+    al = sizeof(void*);
+    zi = 1;  // Zero-init (NULL pointers indicate uninitialized)
+}
+else {
+    // Align element size for inline storage
+    elsz = LLT_ALIGN(elsz, al);
+}
+
+// Compute total data size
+size_t total_data_size = 0;
+int overflow = __builtin_mul_overflow(n, elsz, &total_data_size);
+```
+
+**Change pointer map computation (lines 77-118)** to handle boxed case:
+```c
+if (!isunboxed) {
+    // Boxed elements: ALL positions are pointers
+    npointers = n;
+
+    // Allocate pointer map
+    size_t ptr_map_size = npointers * sizeof(uint32_t);
+    int should_malloc = ptr_map_size >= jl_page_size;
+    if (should_malloc)
+        pointers = (uint32_t*)malloc_s(ptr_map_size);
+    else
+        pointers = (uint32_t*)alloca(ptr_map_size);
+
+    // Simple sequential map: [0, 1, 2, ..., N-1] in word offsets
+    size_t header_words = 0;  // SizedMemory has no header
+    for (size_t i = 0; i < (size_t)n; i++) {
+        pointers[i] = (uint32_t)(header_words + i);
+    }
+    first_ptr = pointers[0];
+    isbitsegal = 0;  // Pointers are not bits-comparable
+    haspadding = 0;  // Pointers have no padding
+}
+else if (jl_is_datatype(eltype)) {
+    // Inline elements with potential pointers inside
+    // ... existing code ...
+}
+```
+
+**Note**: We don't need to set `arrayelem_isboxed` flag because SizedMemory doesn't use it. The type itself knows whether T is boxed, and we can check at accessor time.
+
+#### 2. Accessor Functions (`src/sizedmemory.c`)
+
+**Update `jl_sizedmemory_ref` (lines 391-417)** to handle boxed elements:
+
+```c
+JL_DLLEXPORT jl_value_t *jl_sizedmemory_ref(jl_sizedmemory_t *sm, size_t i)
+{
+    jl_datatype_t *dt = (jl_datatype_t*)jl_typetagof(sm);
+    jl_value_t *eltype = jl_tparam0(dt);
+    size_t n = jl_unbox_long(jl_tparam1(dt));
+
+    if (i >= n)
+        jl_bounds_error_int((jl_value_t*)sm, i + 1);
+
+    // Check if element type is boxed
+    size_t elsz_check = 0, al_check = 1;
+    int isunboxed = jl_islayout_inline(eltype, &elsz_check, &al_check);
+
+    char *data = (char*)jl_sizedmemory_data(sm);
+
+    if (!isunboxed) {
+        // Boxed elements: dereference pointer
+        jl_value_t **elem_ptr = (jl_value_t**)(data + i * sizeof(void*));
+        jl_value_t *elt = jl_atomic_load_relaxed((_Atomic(jl_value_t*)*)elem_ptr);
+        if (elt == NULL)
+            jl_throw(jl_undefref_exception);  // Uninitialized
+        return elt;
+    }
+    else {
+        // Inline elements: copy bits to new object
+        size_t elsz = jl_datatype_size((jl_datatype_t*)eltype);
+        char *elem_ptr = data + i * elsz;
+        return jl_new_bits(eltype, elem_ptr);
+    }
+}
+```
+
+**Update `jl_sizedmemory_set` (lines 420-453)** to handle boxed elements:
+
+```c
+JL_DLLEXPORT void jl_sizedmemory_set(jl_sizedmemory_t *sm, size_t i, jl_value_t *val)
+{
+    jl_datatype_t *dt = (jl_datatype_t*)jl_typetagof(sm);
+    jl_value_t *eltype = jl_tparam0(dt);
+    size_t n = jl_unbox_long(jl_tparam1(dt));
+
+    if (i >= n)
+        jl_bounds_error_int((jl_value_t*)sm, i + 1);
+
+    // Type check
+    if (eltype != (jl_value_t*)jl_any_type && !jl_typeis(val, eltype)) {
+        if (!jl_isa(val, eltype))
+            jl_type_error("jl_sizedmemory_set", eltype, val);
+    }
+
+    // Check if element type is boxed
+    size_t elsz_check = 0, al_check = 1;
+    int isunboxed = jl_islayout_inline(eltype, &elsz_check, &al_check);
+
+    char *data = (char*)jl_sizedmemory_data(sm);
+
+    if (!isunboxed) {
+        // Boxed elements: store pointer with write barrier
+        jl_value_t **elem_ptr = (jl_value_t**)(data + i * sizeof(void*));
+        jl_atomic_store_release((_Atomic(jl_value_t*)*)elem_ptr, val);
+        jl_gc_wb(sm, val);  // Write barrier for GC
+    }
+    else {
+        // Inline elements: copy bits
+        size_t elsz = jl_datatype_size((jl_datatype_t*)jl_typeof(val));
+        char *elem_ptr = data + i * elsz;
+
+        // Check if element type has pointers
+        int hasptr = 0;
+        if (jl_is_datatype(eltype)) {
+            jl_datatype_t *eldt = (jl_datatype_t*)eltype;
+            hasptr = eldt->layout->first_ptr >= 0;
+        }
+
+        // Copy data safely
+        memassign_safe(hasptr, elem_ptr, val, elsz);
+
+        // Write barrier if needed
+        if (hasptr)
+            jl_gc_wb(sm, val);
+    }
+}
+```
+
+#### 3. GC Support (Already Complete!)
+
+The existing GC code should work because:
+- **Stock GC** (`src/gc-stock.c:2453-2509`): Uses pre-computed pointer maps
+  - For boxed elements: pointer map = [0, 1, 2, ..., N-1]
+  - Correctly marks all pointer positions
+- **MMTk GC** (`src/gc-mmtk.c:654-658`): Handles inline data
+  - Copies entire object including inline pointers
+
+**No changes needed** to GC code!
+
+#### 4. Allocation (Already Complete!)
+
+The existing `jl_alloc_sizedmemory` already handles zero-init correctly:
+- For boxed types: `zi = 1`, so storage is zeroed (NULL pointers)
+- For inline types: follows element type's `zeroinit` flag
+
+**No changes needed** to allocation code!
+
+### Testing Plan for Non-isbitstype Support
+
+Once changes are implemented, test with:
+
+```julia
+# Test boxed elements
+sm_any = Core.SizedMemory{Any, 3}()
+sm_any[1] = "hello"
+sm_any[2] = 42
+sm_any[3] = [1, 2, 3]
+println(sm_any[1], " ", sm_any[2], " ", sm_any[3])
+
+# Test uninitialized access
+sm_str = Core.SizedMemory{String, 3}()
+try
+    sm_str[1]  # Should throw UndefRefError
+    println("ERROR: Should have thrown!")
+catch e
+    println("Caught expected error: ", typeof(e))
+end
+
+# Test GC integration
+sm_vec = Core.SizedMemory{Vector{Int}, 2}()
+sm_vec[1] = [1, 2, 3]
+sm_vec[2] = [4, 5, 6]
+GC.gc()  # Force GC
+println("After GC: ", sm_vec[1], " ", sm_vec[2])
+
+# Test nested SizedMemory
+sm_nested = Core.SizedMemory{Core.SizedMemory{Int, 2}, 3}()
+sm_nested[1] = Core.SizedMemory{Int, 2}()
+sm_nested[1][1] = 10
+sm_nested[1][2] = 20
+println("Nested: ", sm_nested[1][1], " ", sm_nested[1][2])
+```
+
+### Summary of Changes
+
+**What's blocking non-isbitstype T**: Single check at `datatype_sizedmemory.c:50`
+
+**Required changes**:
+1. Remove error check for `!isunboxed`
+2. Handle boxed case in layout: `elsz = sizeof(void*)`, simple pointer map
+3. Update ref: dereference pointer if boxed, check NULL
+4. Update set: store pointer + write barrier if boxed
+
+**No changes needed**:
+- GC marking (already uses pointer maps correctly)
+- Allocation (already handles zero-init)
+- Julia interface (ccalls are type-agnostic)
+
+**Estimated effort**: 1-2 hours to implement + 1 hour testing = ~3 hours total
+
+**Risk level**: Low - pattern is well-established in GenericMemory, just needs adaptation
