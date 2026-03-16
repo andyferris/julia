@@ -665,6 +665,8 @@ JL_DLLEXPORT void jl_gc_update_inlined_array(void* from, void* to) {
             }
         }
     }
+    // SizedMemory: data is always inline at offset 0, no ptr field to update
+    // (no action needed for moving GC)
 }
 
 // modified sweep_stack_pools from gc-stacks.c

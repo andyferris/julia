@@ -115,6 +115,8 @@
     XX(returnnode_type, jl_datatype_t*) \
     XX(signed_type, jl_datatype_t*) \
     XX(simplevector_type, jl_datatype_t*) \
+    XX(sizedmemory_type, jl_unionall_t*) \
+    XX(sizedmemory_typename, jl_typename_t*) \
     XX(slotnumber_type, jl_datatype_t*) \
     XX(ssavalue_type, jl_datatype_t*) \
     XX(stackovf_exception, jl_value_t*) \

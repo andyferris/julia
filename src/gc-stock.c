@@ -2476,6 +2476,56 @@ FORCE_INLINE void gc_mark_outrefs(jl_ptls_t ptls, jl_gc_markqueue_t *mq, void *_
             }
             return;
         }
+        if (vt->name == jl_sizedmemory_typename) {
+            // SizedMemory: data is inline at offset 0, length from type parameter
+            size_t n = jl_unbox_long(jl_tparam1(vt));
+            size_t elsz = vt->layout->size;
+            size_t total = n * elsz;
+            if (vt->layout->flags.arrayelem_isunion)
+                total += n;
+            if (update_meta)
+                gc_setmark(ptls, o, bits, total);
+            if (n == 0)
+                return;
+            const jl_datatype_layout_t *layout = vt->layout;
+            char *data = (char*)new_obj;
+            if (layout->flags.arrayelem_isboxed) {
+                if ((jl_datatype_t*)jl_tparam0(vt) == jl_symbol_type)
+                    return;
+                jl_value_t **objary_begin = (jl_value_t **)data;
+                jl_value_t **objary_end = objary_begin + n;
+                uintptr_t nptr = (n << 2) | (bits & GC_OLD);
+                gc_mark_objarray(ptls, new_obj, objary_begin, objary_end, 1, nptr);
+            }
+            else if (layout->first_ptr >= 0) {
+                unsigned npointers = layout->npointers;
+                unsigned elsize = layout->size / sizeof(jl_value_t*);
+                jl_value_t **objary_begin = (jl_value_t**)data;
+                jl_value_t **objary_end = objary_begin + n * elsize;
+                uint32_t step = elsize;
+                uintptr_t nptr = ((n * npointers) << 2) | (bits & GC_OLD);
+                if (npointers == 1) {
+                    objary_begin += layout->first_ptr;
+                    gc_mark_objarray(ptls, new_obj, objary_begin, objary_end, step, nptr);
+                }
+                else if (layout->flags.fielddesc_type == 0) {
+                    uint8_t *obj8_begin = (uint8_t*)jl_dt_layout_ptrs(layout);
+                    uint8_t *obj8_end = obj8_begin + npointers;
+                    gc_mark_memory8(ptls, new_obj, objary_begin, objary_end, obj8_begin, obj8_end,
+                                   elsize, nptr);
+                }
+                else if (layout->flags.fielddesc_type == 1) {
+                    uint16_t *obj16_begin = (uint16_t*)jl_dt_layout_ptrs(layout);
+                    uint16_t *obj16_end = obj16_begin + npointers;
+                    gc_mark_memory16(ptls, new_obj, objary_begin, objary_end, obj16_begin, obj16_end,
+                                    elsize, nptr);
+                }
+                else {
+                    assert(0 && "unimplemented");
+                }
+            }
+            return;
+        }
         size_t dtsz = jl_datatype_size(vt);
         if (update_meta)
             gc_setmark(ptls, o, bits, dtsz);

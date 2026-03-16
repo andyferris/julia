@@ -510,6 +510,91 @@ static int is_type_identityfree(jl_value_t *t)
 }
 
 // make a copy of the layout of st, but with nfields=0
+void jl_get_sizedmemory_layout(jl_datatype_t *st)
+{
+    jl_value_t *eltype = jl_tparam0(st);
+    jl_value_t *n_param = jl_tparam1(st);
+    if (!st->isconcretetype) {
+        return;
+    }
+    if (!jl_is_long(n_param)) {
+        return;
+    }
+    ssize_t sn = jl_unbox_long(n_param);
+    if (sn < 0) {
+        return;
+    }
+    size_t n = (size_t)sn;
+    if (!jl_is_type(eltype)) {
+        static const jl_datatype_layout_t opaque_ptr_layout = {0, 0, 1, -1, sizeof(void*), {0}};
+        st->layout = &opaque_ptr_layout;
+        st->has_concrete_subtype = 0;
+        return;
+    }
+
+    size_t elsz = 0, al = 1;
+    int isunboxed = jl_islayout_inline(eltype, &elsz, &al);
+    int isunion = isunboxed && jl_is_uniontype(eltype);
+    int haspadding = 1;
+    int isbitsegal = 0;
+    int nfields = 0; // opaque layout
+    int npointers = 1;
+    int zi;
+    uint32_t first_ptr = -1;
+    uint32_t *pointers = &first_ptr;
+
+    const jl_datatype_layout_t *el_layout = NULL;
+    if (isunboxed) {
+        elsz = LLT_ALIGN(elsz, al);
+        if (isunion) {
+            zi = 1;
+        }
+        else {
+            assert(jl_is_datatype(eltype));
+            zi = ((jl_datatype_t*)eltype)->zeroinit;
+            el_layout = ((jl_datatype_t*)eltype)->layout;
+            if (el_layout->first_ptr >= 0) {
+                first_ptr = el_layout->first_ptr;
+                npointers = el_layout->npointers;
+                if (el_layout->flags.fielddesc_type == 2) {
+                    pointers = (uint32_t*)jl_dt_layout_ptrs(el_layout);
+                }
+                else {
+                    pointers = (uint32_t*)alloca(npointers * sizeof(uint32_t));
+                    for (int j = 0; j < npointers; j++) {
+                        pointers[j] = jl_ptr_offset((jl_datatype_t*)eltype, j);
+                    }
+                }
+            }
+        }
+    }
+    else {
+        elsz = sizeof(void*);
+        al = elsz;
+        zi = 1;
+    }
+
+    int arrayelem = 0;
+    if (!isunboxed)
+        arrayelem |= 1;  // arrayelem_isboxed
+    if (isunion)
+        arrayelem |= 2;  // arrayelem_isunion
+
+    // Store per-element size in layout->size (same convention as GenericMemory).
+    // The actual object allocation size is n * elsz (+ n for unions), computed
+    // at allocation time from n (type parameter) and layout->size.
+    assert(!st->layout);
+    st->layout = jl_get_layout(elsz, nfields, npointers, al, haspadding, isbitsegal, arrayelem, NULL, pointers);
+    st->zeroinit = zi;
+
+    // Singleton for zero-sized instances (following Memory's pattern)
+    size_t total_size = n * elsz + (isunion ? n : 0);
+    if (total_size == 0) {
+        jl_task_t *ct = jl_current_task;
+        st->instance = jl_gc_permobj(ct->ptls, 0, st, 0);
+    }
+}
+
 void jl_get_genericmemory_layout(jl_datatype_t *st)
 {
     jl_value_t *kind = jl_tparam0(st);
@@ -645,6 +730,10 @@ void jl_compute_field_offsets(jl_datatype_t *st)
     }
     if (st->name == jl_genericmemory_typename) {
         jl_get_genericmemory_layout(st);
+        return;
+    }
+    if (st->name == jl_sizedmemory_typename) {
+        jl_get_sizedmemory_layout(st);
         return;
     }
     int isbitstype = st->isconcretetype && st->name->mayinlinealloc;

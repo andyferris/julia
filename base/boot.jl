@@ -211,7 +211,7 @@ export
     AbstractArray, DenseArray, NamedTuple, Pair,
     # special objects
     Function, Method, Module, Symbol, Task, UndefInitializer, undef, WeakRef, VecElement,
-    Array, Memory, MemoryRef, AtomicMemory, AtomicMemoryRef, GenericMemory, GenericMemoryRef,
+    Array, Memory, MemoryRef, AtomicMemory, AtomicMemoryRef, GenericMemory, GenericMemoryRef, SizedMemory,
     # numeric types
     Number, Real, Integer, Bool, Ref, Ptr,
     AbstractFloat, Float16, Float32, Float64,
@@ -666,6 +666,14 @@ GenericMemoryRef(mem::GenericMemoryRef, i::Integer) = memoryref(mem, i)
 
 const AtomicMemory{T} = GenericMemory{:atomic, T, CPU}
 const AtomicMemoryRef{T} = GenericMemoryRef{:atomic, T, CPU}
+
+# SizedMemory{T, n} is defined in C as a mutable, fixed-size inline buffer
+function (self::Type{SizedMemory{T,n}})() where {T,n}
+    return ccall(:jl_sizedmemory_alloc, Ref{SizedMemory{T,n}}, (Any,), self)
+end
+function (self::Type{SizedMemory{T,n}})(::UndefInitializer) where {T,n}
+    return ccall(:jl_sizedmemory_alloc, Ref{SizedMemory{T,n}}, (Any,), self)
+end
 
 # construction helpers for Array
 new_as_memoryref(self::Type{GenericMemoryRef{kind,T,addrspace}}, m::Int) where {T,kind,addrspace} = memoryref(fieldtype(self, :mem)(undef, m))

@@ -630,6 +630,10 @@ int gc_slot_to_arrayidx(void *obj, void *_slot) JL_NOTSAFEPOINT
         start = (char*)mem->ptr;
         len = mem->length;
     }
+    else if (vt->name == jl_sizedmemory_typename) {
+        start = (char*)obj;
+        len = jl_unbox_long(jl_tparam1(vt));
+    }
     if (slot < start || slot >= start + elsize * len)
         return -1;
     return (slot - start) / elsize;
