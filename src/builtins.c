@@ -595,6 +595,10 @@ JL_CALLABLE(jl_f_sizeof)
     size_t sz = dt->layout->size;
     if (jl_is_genericmemory(x))
         sz = (sz + (dt->layout->flags.arrayelem_isunion ? 1 : 0)) * ((jl_genericmemory_t*)x)->length;
+    else if (jl_is_sizedmemory(x)) {
+        size_t n = jl_unbox_long(jl_tparam1(dt));
+        sz = (sz + (dt->layout->flags.arrayelem_isunion ? 1 : 0)) * n;
+    }
     return jl_box_long(sz);
 }
 
@@ -2285,7 +2289,7 @@ static int references_name(jl_value_t *p, jl_typename_t *name, int affects_layou
         jl_datatype_t *dp = (jl_datatype_t*)p;
         if (affects_layout && dp->name == name)
             return 1;
-        affects_layout = jl_is_genericmemory_type(dp) || ((jl_datatype_t*)jl_unwrap_unionall(dp->name->wrapper))->layout == NULL;
+        affects_layout = jl_is_genericmemory_type(dp) || jl_is_sizedmemory_type(dp) || ((jl_datatype_t*)jl_unwrap_unionall(dp->name->wrapper))->layout == NULL;
         // and even if it has a layout, the fields themselves might trigger layouts if they use tparam i
         // rather than checking this for each field, we just assume it applies
         if (!affects_layout && freevars && jl_field_names(dp) != jl_emptysvec) {
@@ -2628,6 +2632,7 @@ void jl_init_primitives(void) JL_GC_DISABLED
     add_builtin("Array", (jl_value_t*)jl_array_type);
     add_builtin("GenericMemory", (jl_value_t*)jl_genericmemory_type);
     add_builtin("GenericMemoryRef", (jl_value_t*)jl_genericmemoryref_type);
+    add_builtin("SizedMemory", (jl_value_t*)jl_sizedmemory_type);
 
     add_builtin("Expr", (jl_value_t*)jl_expr_type);
     add_builtin("LineNumberNode", (jl_value_t*)jl_linenumbernode_type);

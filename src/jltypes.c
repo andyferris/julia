@@ -3411,6 +3411,17 @@ void jl_init_types(void) JL_GC_DISABLED
     jl_memoryref_any_type = jl_apply_type3((jl_value_t*)jl_genericmemoryref_type, (jl_value_t*)jl_not_atomic_sym, (jl_value_t*)jl_any_type, cpumem);
     jl_memoryref_uint8_type = jl_apply_type3((jl_value_t*)jl_genericmemoryref_type, (jl_value_t*)jl_not_atomic_sym, (jl_value_t*)jl_uint8_type, cpumem);
 
+    // SizedMemory{T, n} <: DenseArray{T, 1}
+    tv = jl_svec(2, tvar("T"), tvar("n"));
+    jl_datatype_t *sizedmemory_super = (jl_datatype_t*)jl_apply_type2(
+        (jl_value_t*)jl_densearray_type, jl_svecref(tv, 0), jl_box_long(1));
+    jl_datatype_t *sizedmemory_dt =
+        jl_new_datatype(jl_symbol("SizedMemory"), core, sizedmemory_super, tv,
+                        jl_emptysvec, jl_emptysvec,
+                        jl_emptysvec, 0, 1, 0);
+    jl_sizedmemory_typename = sizedmemory_dt->name;
+    jl_sizedmemory_type = (jl_unionall_t*)jl_sizedmemory_typename->wrapper;
+
     tv = jl_svec2(tvar("T"), tvar("N"));
     jl_array_typename = jl_new_datatype(jl_symbol("Array"), core,
                         (jl_datatype_t*)jl_apply_type((jl_value_t*)jl_densearray_type, jl_svec_data(tv), 2),

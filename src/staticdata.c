@@ -876,6 +876,29 @@ static void jl_insert_into_serialization_queue(jl_serializer_state *s, jl_value_
             }
         }
     }
+    else if (jl_is_sizedmemory(v)) {
+        const char *data = (const char*)v;
+        if (layout->flags.arrayelem_isboxed) {
+            size_t n = jl_unbox_long(jl_tparam1(t));
+            for (size_t i = 0; i < n; i++) {
+                jl_value_t *fld = get_replaceable_field(&((jl_value_t**)data)[i], 1);
+                jl_queue_for_serialization_(s, fld, 1, immediate);
+            }
+        }
+        else if (layout->first_ptr >= 0) {
+            uint16_t elsz = layout->size;
+            size_t n = jl_unbox_long(jl_tparam1(t));
+            size_t np = layout->npointers;
+            for (size_t i = 0; i < n; i++) {
+                for (size_t j = 0; j < np; j++) {
+                    uint32_t ptr = jl_ptr_offset(t, j);
+                    jl_value_t *fld = get_replaceable_field(&((jl_value_t**)data)[ptr], 1);
+                    jl_queue_for_serialization_(s, fld, 1, immediate);
+                }
+                data += elsz;
+            }
+        }
+    }
     else if (jl_is_module(v)) {
         jl_queue_module_for_serialization(s, (jl_module_t*)v);
     }
@@ -1570,6 +1593,47 @@ static void jl_write_values(jl_serializer_state *s) JL_GC_DISABLED
         }
         else if (jl_is_foreign_type(t) == 1) {
             abort(); // unreachable
+        }
+        else if (jl_is_sizedmemory(v)) {
+            assert(f == s->s);
+            const jl_datatype_layout_t *layout = t->layout;
+            size_t n = jl_unbox_long(jl_tparam1(t));
+            size_t elsz = layout->size;
+            size_t datasize = n * elsz;
+            size_t tot = datasize;
+            if (layout->flags.arrayelem_isunion)
+                tot += n;
+            if (!layout->flags.arrayelem_isboxed && layout->first_ptr < 0) {
+                // Pure isbits data — write inline
+                ios_write(f, (char*)v, tot);
+            }
+            else if (layout->flags.arrayelem_isboxed) {
+                // All elements are pointers
+                jl_value_t **data = (jl_value_t**)v;
+                for (size_t i = 0; i < n; i++) {
+                    jl_value_t *e = get_replaceable_field(&data[i], 1);
+                    write_pointerfield(s, e);
+                }
+            }
+            else {
+                // Inline data with embedded pointers
+                const char *data = (const char*)v;
+                ios_write(f, data, datasize);
+                size_t np = layout->npointers;
+                for (size_t i = 0; i < n; i++) {
+                    for (size_t j = 0; j < np; j++) {
+                        size_t offset = i * elsz + jl_ptr_offset(t, j) * sizeof(jl_value_t*);
+                        jl_value_t *fld = get_replaceable_field((jl_value_t**)&data[offset], 1);
+                        size_t fld_pos = reloc_offset + offset;
+                        if (fld != NULL) {
+                            arraylist_push(&s->relocs_list, (void*)(uintptr_t)fld_pos);
+                            arraylist_push(&s->relocs_list, (void*)backref_id(s, fld, s->link_ids_relocs));
+                            record_uniquing(s, fld, fld_pos);
+                        }
+                        memset(&f->buf[fld_pos], 0, sizeof(fld));
+                    }
+                }
+            }
         }
         else if (jl_datatype_nfields(t) == 0) {
             // The object has no fields, so we just snapshot its byte representation
