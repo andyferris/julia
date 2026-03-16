@@ -39,6 +39,9 @@ TRANSFORMED_CCALL_STAT(memcpy);
 TRANSFORMED_CCALL_STAT(memset);
 TRANSFORMED_CCALL_STAT(memmove);
 TRANSFORMED_CCALL_STAT(jl_object_id);
+TRANSFORMED_CCALL_STAT(jl_sizedmemory_alloc);
+TRANSFORMED_CCALL_STAT(jl_sizedmemoryget);
+TRANSFORMED_CCALL_STAT(jl_sizedmemoryset);
 #undef TRANSFORMED_CCALL_STAT
 extern "C" JL_DLLEXPORT jl_value_t *ijl_genericmemory_owner(jl_genericmemory_t *m JL_PROPAGATES_ROOT) JL_NOTSAFEPOINT;
 
@@ -2067,6 +2070,168 @@ static jl_cgval_t emit_ccall(jl_codectx_t &ctx, jl_value_t **args, size_t nargs)
             setName(ctx.emission_context, ret, "object_id");
             JL_GC_POP();
             return mark_or_box_ccall_result(ctx, ret, retboxed, rt, unionall, static_rt);
+        }
+    }
+    else if (is_libjulia_func(jl_sizedmemory_alloc) && nccallargs == 1) {
+        ++CCALL_STAT(jl_sizedmemory_alloc);
+        const jl_cgval_t &mtype_val = argv[0];
+        if (mtype_val.constant && jl_is_sizedmemory_type(mtype_val.constant)) {
+            jl_datatype_t *typ = (jl_datatype_t*)mtype_val.constant;
+            jl_value_t *eltype = jl_tparam0(typ);
+            if (typ->layout && jl_is_concrete_type((jl_value_t*)typ) &&
+                    (jl_is_type(eltype) || jl_is_typevar(eltype))) {
+                if (typ->instance != NULL) {
+                    JL_GC_POP();
+                    return mark_julia_type(ctx, track_pjlvalue(ctx,
+                        literal_pointer_val(ctx, typ->instance)), true, typ);
+                }
+                size_t n = jl_unbox_long(jl_tparam1(typ));
+                const jl_datatype_layout_t *layout = typ->layout;
+                size_t elsz = layout->size;
+                size_t total = n * elsz;
+                if (layout->flags.arrayelem_isunion)
+                    total += n;
+                SmallVector<uint64_t, 4> gc_offsets;
+                if (layout->flags.arrayelem_isboxed) {
+                    for (size_t i = 0; i < n; i++)
+                        gc_offsets.push_back(i * sizeof(void*));
+                }
+                else if (layout->first_ptr >= 0) {
+                    unsigned npointers = layout->npointers;
+                    unsigned elwords = elsz / sizeof(void*);
+                    for (size_t i = 0; i < n; i++) {
+                        for (unsigned j = 0; j < npointers; j++) {
+                            uint32_t ptr_off = jl_ptr_offset(typ, j);
+                            gc_offsets.push_back((i * elwords + ptr_off) * sizeof(void*));
+                        }
+                    }
+                }
+                Value *alloc = emit_allocobj(ctx, total,
+                    ctx.builder.CreateIntToPtr(emit_tagfrom(ctx, typ),
+                        ctx.types().T_pjlvalue),
+                    false, julia_alignment((jl_value_t*)typ), gc_offsets);
+                setName(ctx.emission_context, alloc, "sizedmemory_alloc");
+                if (typ->zeroinit) {
+                    ctx.builder.CreateMemSet(
+                        emit_pointer_from_objref(ctx, alloc),
+                        ConstantInt::get(getInt8Ty(ctx.builder.getContext()), 0),
+                        total, MaybeAlign(julia_alignment((jl_value_t*)typ)));
+                }
+                JL_GC_POP();
+                return mark_julia_type(ctx, alloc, true, typ);
+            }
+        }
+    }
+    else if (is_libjulia_func(jl_sizedmemoryget) && nccallargs == 2) {
+        ++CCALL_STAT(jl_sizedmemoryget);
+        const jl_cgval_t &mem_val = argv[0];
+        jl_value_t *mty = mem_val.typ;
+        if (jl_is_sizedmemory_type(mty) && jl_is_concrete_type(mty)) {
+            jl_datatype_t *typ = (jl_datatype_t*)mty;
+            const jl_datatype_layout_t *layout = typ->layout;
+            jl_value_t *ety = jl_tparam0(typ);
+
+            Value *obj = emit_pointer_from_objref(ctx, boxed(ctx, mem_val));
+            Value *idx = emit_unbox(ctx, ctx.types().T_size, update_julia_type(ctx, argv[1], (jl_value_t*)jl_ulong_type));
+
+            jl_cgval_t result;
+            if (layout->flags.arrayelem_isboxed) {
+                Value *slot = ctx.builder.CreateInBoundsGEP(ctx.types().T_prjlvalue, obj, idx);
+                setName(ctx.emission_context, slot, "sizedmemory_boxed_slot");
+                result = typed_load(ctx, slot, nullptr, ety,
+                    ctx.tbaa().tbaa_ptrarraybuf, nullptr,
+                    true, AtomicOrdering::NotAtomic, true);
+            }
+            else if (layout->flags.arrayelem_isunion) {
+                size_t n = jl_unbox_long(jl_tparam1(typ));
+                size_t elsz = layout->size;
+                size_t al = layout->alignment;
+                Type *AT = ArrayType::get(IntegerType::get(ctx.builder.getContext(), 8 * al),
+                                          (elsz + al - 1) / al);
+                Value *data = ctx.builder.CreateInBoundsGEP(AT, obj, idx);
+                setName(ctx.emission_context, data, "sizedmemory_union_data");
+                Value *ptindex = emit_ptrgep(ctx, obj, n * elsz);
+                ptindex = ctx.builder.CreateInBoundsGEP(getInt8Ty(ctx.builder.getContext()), ptindex, idx);
+                setName(ctx.emission_context, ptindex, "sizedmemory_union_tindex");
+                result = typed_load(ctx, data, NULL, ety,
+                    ctx.tbaa().tbaa_arraybuf, nullptr, false,
+                    AtomicOrdering::NotAtomic, false, 0, nullptr,
+                    ptindex, ctx.tbaa().tbaa_arrayselbyte);
+            }
+            else if (layout->size == 0) {
+                result = ghostValue(ctx, ety);
+            }
+            else {
+                Type *elty = julia_type_to_llvm(ctx, ety);
+                Value *ptr = ctx.builder.CreateInBoundsGEP(elty, obj, idx);
+                setName(ctx.emission_context, ptr, "sizedmemory_isbits_ptr");
+                result = typed_load(ctx, ptr, nullptr, ety,
+                    ctx.tbaa().tbaa_arraybuf, nullptr,
+                    false, AtomicOrdering::NotAtomic);
+            }
+            JL_GC_POP();
+            return result;
+        }
+    }
+    else if (is_libjulia_func(jl_sizedmemoryset) && nccallargs == 3) {
+        ++CCALL_STAT(jl_sizedmemoryset);
+        const jl_cgval_t &mem_val = argv[0];
+        jl_value_t *mty = mem_val.typ;
+        if (jl_is_sizedmemory_type(mty) && jl_is_concrete_type(mty)) {
+            jl_datatype_t *typ = (jl_datatype_t*)mty;
+            const jl_datatype_layout_t *layout = typ->layout;
+            jl_value_t *ety = jl_tparam0(typ);
+            jl_cgval_t rhs = argv[1];
+            Value *idx = emit_unbox(ctx, ctx.types().T_size, update_julia_type(ctx, argv[2], (jl_value_t*)jl_ulong_type));
+
+            Value *obj = emit_pointer_from_objref(ctx, boxed(ctx, mem_val));
+            Value *parent = boxed(ctx, mem_val);
+
+            if (layout->flags.arrayelem_isboxed) {
+                Value *slot = ctx.builder.CreateInBoundsGEP(ctx.types().T_prjlvalue, obj, idx);
+                setName(ctx.emission_context, slot, "sizedmemory_boxed_slot");
+                Value *rhs_boxed = boxed(ctx, rhs);
+                ctx.builder.CreateAlignedStore(rhs_boxed, slot, Align(sizeof(void*)));
+                emit_write_barrier(ctx, parent, rhs_boxed);
+            }
+            else if (layout->flags.arrayelem_isunion) {
+                size_t n = jl_unbox_long(jl_tparam1(typ));
+                size_t elsz = layout->size;
+                Value *ptindex = emit_ptrgep(ctx, obj, n * elsz);
+                ptindex = ctx.builder.CreateInBoundsGEP(getInt8Ty(ctx.builder.getContext()), ptindex, idx);
+                jl_cgval_t rhs_union = convert_julia_type_to_union(ctx, rhs, ety, false);
+                if (rhs_union.typ == jl_bottom_type) {
+                    JL_GC_POP();
+                    return jl_cgval_t();
+                }
+                Value *tindex = ctx.builder.CreateAnd(rhs_union.TIndex,
+                    ConstantInt::get(getInt8Ty(ctx.builder.getContext()), ~UNION_BOX_MARKER));
+                Value *stindex = ctx.builder.CreateNUWSub(tindex,
+                    ConstantInt::get(getInt8Ty(ctx.builder.getContext()), 1));
+                jl_aliasinfo_t ai = jl_aliasinfo_t::fromTBAA(ctx, ctx.tbaa().tbaa_arrayselbyte);
+                ai.decorateInst(ctx.builder.CreateAlignedStore(stindex, ptindex, Align(1)));
+                if (elsz > 0) {
+                    size_t al = layout->alignment;
+                    Type *AT = ArrayType::get(IntegerType::get(ctx.builder.getContext(), 8 * al),
+                                              (elsz + al - 1) / al);
+                    Value *data = ctx.builder.CreateInBoundsGEP(AT, obj, idx);
+                    emit_unionmove(ctx, data, ety, ctx.tbaa().tbaa_arraybuf, rhs_union, tindex, nullptr);
+                }
+            }
+            else if (layout->size != 0) {
+                Type *elty = julia_type_to_llvm(ctx, ety);
+                Value *ptr = ctx.builder.CreateInBoundsGEP(elty, obj, idx);
+                setName(ctx.emission_context, ptr, "sizedmemory_isbits_ptr");
+                typed_store(ctx, ptr, rhs, jl_cgval_t(),
+                    ety, ctx.tbaa().tbaa_arraybuf, nullptr,
+                    layout->first_ptr >= 0 ? parent : nullptr,
+                    false, AtomicOrdering::NotAtomic, AtomicOrdering::NotAtomic,
+                    julia_alignment(ety), nullptr, StoreKind::Set,
+                    false, nullptr, "sizedmemoryset!",
+                    nullptr, nullptr);
+            }
+            JL_GC_POP();
+            return ghostValue(ctx, jl_nothing_type);
         }
     }
 
