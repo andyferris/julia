@@ -509,6 +509,14 @@ end
 function _const_sizeof(@nospecialize(x))
     # Constant GenericMemory does not have constant size
     isa(x, GenericMemory) && return Int
+    # But SizedMemory does have constant size
+    if isa(x, Type) && x <: Core.SizedMemory
+        if isconcretetype(x)
+            # For concrete SizedMemory{T, N}, we could compute the size
+            # but for now just return Int to be safe
+            return Int
+        end
+    end
     size = try
             Core.sizeof(x)
         catch ex

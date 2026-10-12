@@ -1173,12 +1173,12 @@ function const_prop_function_heuristic(interp::AbstractInterpreter, @nospecializ
                 if !still_nothrow || ismutabletype(arrty)
                     return false
                 end
-            elseif ⊑(𝕃ᵢ, arrty, Array) || ⊑(𝕃ᵢ, arrty, GenericMemory)
+            elseif ⊑(𝕃ᵢ, arrty, Array) || ⊑(𝕃ᵢ, arrty, GenericMemory) || ⊑(𝕃ᵢ, arrty, Core.SizedMemory)
                 return false
             end
         elseif heuristic === Core.ITERATE_HEURISTIC
             itrty = argtypes[2]
-            if ⊑(𝕃ᵢ, itrty, Array) || ⊑(𝕃ᵢ, itrty, GenericMemory)
+            if ⊑(𝕃ᵢ, itrty, Array) || ⊑(𝕃ᵢ, itrty, GenericMemory) || ⊑(𝕃ᵢ, itrty, Core.SizedMemory)
                 return false
             end
         end
@@ -1555,7 +1555,7 @@ function precise_container_type(interp::AbstractInterpreter, @nospecialize(itft)
         return Future(AbstractIterationResult(Any[Vararg{Any}], nothing))
     elseif tti0 === Any
         return Future(AbstractIterationResult(Any[Vararg{Any}], nothing, Effects()))
-    elseif tti0 <: Array || tti0 <: GenericMemory
+    elseif tti0 <: Array || tti0 <: GenericMemory || tti0 <: Core.SizedMemory
         if eltype(tti0) === Union{}
             return Future(AbstractIterationResult(Any[], nothing))
         end
@@ -1582,7 +1582,7 @@ function abstract_iteration(interp::AbstractInterpreter, @nospecialize(itft), @n
         # Return Bottom if this is not an iterator.
         # WARNING: Changes to the iteration protocol must be reflected here,
         # this is not just an optimization.
-        # TODO: this doesn't realize that Array, GenericMemory, SimpleVector, Tuple, and NamedTuple do not use the iterate protocol
+        # TODO: this doesn't realize that Array, GenericMemory, SizedMemory, SimpleVector, Tuple, and NamedTuple do not use the iterate protocol
         if stateordonet === Bottom
             iterateresult[] = AbstractIterationResult(Any[Bottom], AbstractIterationInfo(CallMeta[CallMeta(Bottom, Any, call1.effects, call1.info)], true))
             return true
